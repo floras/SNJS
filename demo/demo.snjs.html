@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head> 
+	<title> SNJS DEMO HTML </title>
+<head>
+<body>
+	<snjs>
+		echo("hello");
+	</snjs>
+	<script type="application/x-snjs">
+		print("world");
+	</script>
+	<script type="text/javascript">
+		document.write("script for only client");
+	</script>
+	<script type="text/javascript" share="true">
+		var share = "SHARE MODE";
+		document.write("Anything can't be printed out in share script.");
+	</script>
+	<script type="application/x-snjs">
+		// You can acess share script
+		document.write(share); 
+	</script>	
+	<script type="application/x-snjs">
+		// You can use global object(window) at this document
+		document.write(window.share.toLowerCase()); 
+	</script>
+</body>
+</html>
