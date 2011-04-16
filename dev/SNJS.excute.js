@@ -16,10 +16,11 @@ SNJS.excute = function(connector) {
 	var STATE   = "init";
 	var TYPE; // 'snjs', 'share', 'script'
 
-	CODEBOX._PARSED = [];
+	CODEBOX._PARSED = {};
 
 	// BUILT ENVIRONMENT FROM OPTIONS
 	if (OPTIONS['ALLOW_REQUIRE']) CODEBOX.require = require;
+	if (OPTIONS['ALLOW_CONSOLE']) CODEBOX.console = console;
 
 	// ATTACH GLOBAL OBJECT
 	vm.runInNewContext("var self=window=this;", CODEBOX, VFILE);
@@ -33,23 +34,12 @@ SNJS.excute = function(connector) {
 			CODEBOX._PARSED[COUNTER].push(txt);
 		}
 	};
-	if (CODEBOX.document) CODEBOX.document.write = CODEBOX.print;
-	
+	if (CODEBOX.document) CODEBOX.document.write = CODEBOX.print;	
 
 	CODEBOX.echo = function(txt) {
 		var text = txt;
 		CODEBOX.print(text);
 	};
-
-	
-	// ATTACH COOKIES UTILS (document.write, echo);
-
-	if (CONNECTOR.COOKIES) {
-		for (var i in CONNECTOR.COOKIES) {
-
-		}
-	}
-
 	
 	STATE = "loading";
 
@@ -83,7 +73,7 @@ SNJS.excute = function(connector) {
 		var range  = script._range;
 		var data   = CODEBOX._PARSED[i].join("");
 		if (type=="share") continue;
-		if (data) {			
+		if (data) {
 			var header  = PARSED.slice(0, range[0] + CARROT);
 			var footer  = PARSED.slice(range[1] + CARROT);
 			PARSED = header + data + footer;

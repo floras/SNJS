@@ -6,12 +6,9 @@ var vm = require('vm');
 var path = require('path');
 var extToCTYPE = require("./SNJS.ext.js");
 
-var SNJS = function(target, connector, callback) {
+var SNJS = function(target, connector, callback) {	
 
-	// CONNECTOR -> WINDOW -> EXCUTE CODE -> CHANGE TEXT -> CONNECTOR
-	
-
-	// O. INIT (TRIM CONNECTOR OBJECT & ARGUMENTS);
+	// O. INIT 
 
 	var CONNECTOR = connector || {} ;
 
@@ -37,6 +34,7 @@ var SNJS = function(target, connector, callback) {
 	CONNECTOR.VARS	   = CONNECTOR.VARS     || {}; // Pass the variables to the Codebox.
 	CONNECTOR.OPTIONS  = rebuildOptions(CONNECTOR);
 	CONNECTOR.ERROR    = undefined;
+	CONNECTOR.PROTOCOL = CONNECTOR.PROTOCOL || ""; // HTTP, HTTPS, SIP
 	CONNECTOR.isCONN   = true;	
 
 	// 1. CHECK TYPE AND GET SOURCE   
@@ -52,7 +50,7 @@ var SNJS = function(target, connector, callback) {
 
 	// 2. GET SCRIPTS FROM SOURCE
 
-	CONNECTOR.SCRIPTS = SNJS.collect(CONNECTOR.SOURCE);
+	SNJS.collect(CONNECTOR);
 	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
 	
 	// 3. CREATE CODEBOX  
@@ -60,21 +58,21 @@ var SNJS = function(target, connector, callback) {
 	if (CONNECTOR.SCRIPTS) CONNECTOR.CODEBOX = SNJS.codebox.create(CONNECTOR);
 	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
 
-	// IV. EXCUTE SCRIPT 
+	// 4. EXCUTE SCRIPT 
 	if (CONNECTOR.SCRIPTS) {SNJS.excute(CONNECTOR)};
 	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
 
-	// V. RENDER CODEBOX -> RESULT
+	// 5. REBUILD CONNECTOR from CODEBOX
 	if (CONNECTOR.SCRIPTS) {SNJS.codebox.render(CONNECTOR)};
 	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
 
-	// VI. FINISH SNJS
+	// 6. FINISH SNJS
 
 	if (CONNECTOR.ASYNC&&CONNECTOR.CALLBACK) return CONNECTOR.CALLBACK(CONNECTOR);
 	else return CONNECTOR;
 };
 
-SNJS.VERSION = "v0.0.1pa";
+SNJS.VERSION = "v0.0.02pa";
 SNJS.VER = function() {console.log(SNJS.VERSION);};
 
 // SNJS BUILT-IN UTILS

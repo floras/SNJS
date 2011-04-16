@@ -1,5 +1,6 @@
 {
-	"ALLOW_REQUIRE" : true,
-	"ALLOW_CONSOLE" : true,
-	"ALLOW_SHARE"	: true
+	"ALLOW_SOURCE_LINK" : true,
+	"ALLOW_REQUIRE"     : true,
+	"ALLOW_CONSOLE"     : true,
+	"ALLOW_SHARE"	    : true
 }

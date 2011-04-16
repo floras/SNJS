@@ -1,5 +1,5 @@
 var extToCTYPE = function (ext) { // TEMPRORY FUNCTION;
-	var EXT = ext.toUpperCase()|| "NON" ;
+	var EXT = ext.toUpperCase()|| "_NON" ;
 	var CTYPE = { 
 		// BINARY
 		BIN  : "application/octet-stream",

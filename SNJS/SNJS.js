@@ -6,11 +6,9 @@ var vm = require('vm');
 var path = require('path');
 var extToCTYPE = require("./SNJS.ext.js");
 
-var SNJS = function(target, connector, callback) {
+var SNJS = function(target, connector, callback) {	
 
-	// CONNECTOR -> WINDOW -> EXCUTE CODE -> CHANGE TEXT -> CONNECTOR	
-
-	// O. INIT (TRIM CONNECTOR OBJECT & ARGUMENTS);
+	// O. INIT 
 
 	var CONNECTOR = connector || {} ;
 
@@ -36,6 +34,7 @@ var SNJS = function(target, connector, callback) {
 	CONNECTOR.VARS	   = CONNECTOR.VARS     || {}; // Pass the variables to the Codebox.
 	CONNECTOR.OPTIONS  = rebuildOptions(CONNECTOR);
 	CONNECTOR.ERROR    = undefined;
+	CONNECTOR.PROTOCOL = CONNECTOR.PROTOCOL || ""; // HTTP, HTTPS, SIP
 	CONNECTOR.isCONN   = true;	
 
 	// 1. CHECK TYPE AND GET SOURCE   
@@ -51,7 +50,7 @@ var SNJS = function(target, connector, callback) {
 
 	// 2. GET SCRIPTS FROM SOURCE
 
-	CONNECTOR.SCRIPTS = SNJS.collect(CONNECTOR.SOURCE);
+	SNJS.collect(CONNECTOR);
 	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
 	
 	// 3. CREATE CODEBOX  
@@ -63,7 +62,7 @@ var SNJS = function(target, connector, callback) {
 	if (CONNECTOR.SCRIPTS) {SNJS.excute(CONNECTOR)};
 	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
 
-	// 5. RENDER CODEBOX -> RESULT
+	// 5. REBUILD CONNECTOR from CODEBOX
 	if (CONNECTOR.SCRIPTS) {SNJS.codebox.render(CONNECTOR)};
 	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
 
@@ -73,7 +72,7 @@ var SNJS = function(target, connector, callback) {
 	else return CONNECTOR;
 };
 
-SNJS.VERSION = "v0.0.1pa";
+SNJS.VERSION = "v0.0.02pa";
 SNJS.VER = function() {console.log(SNJS.VERSION);};
 
 // SNJS BUILT-IN UTILS
@@ -197,6 +196,7 @@ var excuteError = function(connector) {
 //  SNJS.codebox.js
 
 SNJS.codebox = {};
+
 SNJS.codebox.create = function(connector) {
 	var CONNECTOR = connector;
 	var CODEBOX = {
@@ -208,21 +208,22 @@ SNJS.codebox.create = function(connector) {
 	};
 	var ENV = CODEBOX._ENV;
 	
-	for (var i in CONNECTOR.VARS) CODEBOX[i] = CONNECTOR.VARS[i];
+	for (var i in CONNECTOR.VARS) CODEBOX[i] = CODEBOX[i] || CONNECTOR.VARS[i];
 
-	// SET ENVIROMENTAL VARIABLES  
-	if (CONNECTOR.URL)	      ENV['URL']         = CONNECTOR.URL;	
+	// SET ENVIROMENTAL VARIABLES  		
+	if (CONNECTOR.PROTOCOL)   ENV['protocol']    = CONNECTOR.PROTOCOL; 
+	if (CONNECTOR.URL)        ENV['URL']         = CONNECTOR.URL;	
 	if (CONNECTOR.METHOD)     ENV['method']      = CONNECTOR.METHOD;
 	if (CONNECTOR.USERAGENT)  ENV['user_agent']  = CONNECTOR.USERAGENT;
 	if (CONNECTOR.REMOTEADDR) ENV['remote_addr'] = CONNECTOR.REMOTEADDR;
 	if (CONNECTOR.RFERRER)    ENV['referrer']    = CONNECTOR.RFERRER;	
-	if (CONNECTOR.SESSIONID)  ENV['sessionid']   = CONNECTOR.SESSIONID;	
+	if (CONNECTOR.SESSIONID)  ENV['sessionid']   = CONNECTOR.SESSIONID;
 	if (CONNECTOR.CHARSET)    ENV['charset']     = CONNECTOR.CHARSET;	
 	if (CONNECTOR.TYPE = "FILE") {
-		CONNECTOR.ENV['modification']      = CONNECTOR.FILEINFO.mtime;
-		CODEBOX._RESPONSE['last-modified'] = CONNECTOR.FILEINFO.mtime;
+		CONNECTOR.ENV['modification']            = CONNECTOR.FILEINFO.mtime;
+		CODEBOX._RESPONSE['last-modified']       = CONNECTOR.FILEINFO.mtime;
 		if (CONNECTOR.FILEINFO['content-type']) 
-		CODEBOX._RESPONSE['content-type']  = CONNECTOR.FILEINFO['content-type'];
+		CODEBOX._RESPONSE['content-type']        = CONNECTOR.FILEINFO['content-type'];
 	};
 	return CODEBOX;	
 };
@@ -230,9 +231,11 @@ SNJS.codebox.create = function(connector) {
 SNJS.codebox.render = function(connector) {
 	var CONNECTOR = connector;
 	var CODEBOX   = CONNECTOR.CODEBOX; 
+
 	CONNECTOR.RESPONSE = CODEBOX._RESPONSE;
 	CONNECTOR.COOKIES  = CODEBOX.COOKIES;
 	CONNECTOR.SESSION  = CODEBOX.SESSION;
+
 	return CONNECTOR;
 };
 
@@ -338,14 +341,17 @@ var NEEDLE = {
 	script   : "<(script)(\\s+(?:\"[^\"]*\"|'[^']*'|[^>])+)?>([\\S|\\s]*?)</\\1>",
 };
 
-SNJS.collect = function(source) { //script collection
+
+SNJS.collect = function(connector) { //script collection
 	var result = [];
-	var source = source;
+	var CONNECTOR = connector;
+	var OPTIONS = CONNECTOR.OPTIONS;
+	var source = CONNECTOR.SOURCE;
 	var _attr, _tag;
 	for ( _tag in NEEDLE) {
 		var Reg = RegExp(NEEDLE[_tag], "gi");
 		var test;
-		while ((test = Reg.exec(source)) != null) {
+		while ((test = Reg.exec(source)) != null) { try {
 			if (test[2]) {
 				_attr = test[2].trim();
 				_attr = _attr.match(/(\w|^=)+=("[^"]*"|'[^']*')+/gi);
@@ -363,7 +369,7 @@ SNJS.collect = function(source) { //script collection
 				attributes : attr,
 				text       : test[3],
 				_type	   : undefined,
-				_range      : [test.index, Reg.lastIndex]
+				_range     : [test.index, Reg.lastIndex]
 			};
 			if (script.attributes&&script.attributes.src) script.src = script.attributes.src;
 			if (script.attributes&&script.attributes.id) script.id = script.attributes.id;
@@ -375,13 +381,22 @@ SNJS.collect = function(source) { //script collection
 				} else if (script.attributes.type=="application/x-snjs") script._type = "script";
 			};
 
+			if (script._type&&script.src&&OPTIONS.ALLOW_SOURCE_LINK) {
+				var file = "";
+				if (script.src.indexOf(":") > 0 ) continue; // skip remote resource (http://);
+				else if (script.src.charAt(0) == "/") file = script.src;
+				else file = CONNECTOR.FILEINFO.path + "/" + script.src;
+				file = path.normalize(file);
+				script.text = fs.readFileSync(file);
+			};
 			if (script._type) result.push(script);
-		};
+
+		} catch(err) {CONNECTOR.ERROR = "SNJS.collect " + err; return CONNECTOR} };
 	};
 	if (result.length == 0) return undefined;
 	var sort = function(a,b){return a._range[0]-b._range[0]};
-	var result = result.sort(sort);
-	return result;
+	CONNECTOR.SCRIPTS = result.sort(sort);
+	return CONNECTOR;
 };
 
 
