@@ -6,14 +6,14 @@ var vm = require('vm');
 var path = require('path');
 var extToCTYPE = require("./SNJS.ext.js");
 
-var SNJS = function(target, connector, callback) {
+var SNJS = function(target, connector, callback) {	
 
 	// O. INIT 
 
 	var CONNECTOR = connector || {} ;
 
 	CONNECTOR.ASYNC    = (callback) ? true : false ;
-	CONNECTOR.TYPE	   = (checkFileUrl(target)) ? "FILE" : "SOURCE"; 
+	CONNECTOR.TYPE	   = (checkFileUrl(target)) ? "FILE" : "SOURCE";
 	CONNECTOR.URL	   = CONNECTOR.URL || "";
 	CONNECTOR.USERAGENT= CONNECTOR.USERAGENT|| "";
 	CONNECTOR.REFERRER = CONNECTOR.REFERRER || "";
@@ -29,58 +29,45 @@ var SNJS = function(target, connector, callback) {
 	CONNECTOR.CHARSET  = CONNECTOR.CHARSET  || "utf-8";
 	CONNECTOR.CALLBACK = (typeof callback == "function") ? callback : undefined;	
 	CONNECTOR.SOURCE   = CONNECTOR.SOURCE   || "";
-  //CONNECTOR.PARSED   = ""; // Set By SNJS.execute()
-  //CONNECTOR.ENV	   = {};					   // Set By CODEBOX
+  //CONNECTOR.PARSED   = ""; // Set By SNJS.excute()
+	CONNECTOR.ENV	   = {};					   // Set By CODEBOX
 	CONNECTOR.VARS	   = CONNECTOR.VARS     || {}; // Pass the variables to the Codebox.
-	CONNECTOR.ERROR    = {SOFT:[], NORMAL:""};
+	CONNECTOR.OPTIONS  = rebuildOptions(CONNECTOR);
+	CONNECTOR.ERROR    = {SOFT:[], NORMAL:[]};
 	CONNECTOR.PROTOCOL = CONNECTOR.PROTOCOL || ""; // HTTP, HTTPS, SIP
 	CONNECTOR.isCONN   = true;
-	CONNECTOR.INCLUDE  = { FILES : [], DEPTH : 0, PARENTS : []};
-	CONNECTOR.OPTIONS  = rebuildOptions(CONNECTOR);
+	CONNECTOR.INCLUDE  = { FILES : [], DEPTH : 0, PARENTS : []};	
 
 	restrict(CONNECTOR, 'OPTIONS');
 
-	// 1. CHECK TYPE AND GET SOURCE 
-
-	if (typeof target != "string") {  // EXCEPTION invalid target option
-		CONNECOTR.ERROR.NORMAL = "[SNJS] " + "invaild file or source";
-		return executeError(CONNECTOR);
-	}
+	// 1. CHECK TYPE AND GET SOURCE   
 	
 	if (CONNECTOR.TYPE == "FILE") {
-		CONNECTOR.FILE = trimFile(target, CONNECTOR);
-		if (!CONNECTOR.FILE) {
-			CONNECTOR.ERROR.NORMAL = "[SNJS 0]" + " check directory option or/and file";
-			return executeError(CONNECTOR);
-		}
+		CONNECTOR.FILE = target;
+		CONNECTOR.ENV['file'] = target;
 		CONNECTOR.FILEINFO = getFileInfo(CONNECTOR);
-		
-		try	{
-			CONNECTOR.SOURCE = fs.readFileSync(target, CONNECTOR.CHARSET);
-		} catch (err) {
-			CONNECTOR.ERROR.NORMAL = "[SNJS.js] check source file : " + FILE ;
-		}
-
+		try	{CONNECTOR.SOURCE = fs.readFileSync(target, CONNECTOR.CHARSET);}
+		catch (err) {CONNECTOR.ERROR = "SNJS CAN'T ACCESS SOURCE : " + FILE}
 	} else if (!CONNECTOR.SOURCE)  CONNECTOR.SOURCE = target;
-	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL.length > 0) { return excuteError(CONNECTOR)};
 
 	// 2. GET SCRIPTS FROM SOURCE
 
 	SNJS.collect(CONNECTOR);
-	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL.length > 0) { return excuteError(CONNECTOR)};
 	
 	// 3. CREATE CODEBOX  
 
 	if (CONNECTOR.SCRIPTS) CONNECTOR.CODEBOX = SNJS.codebox.create(CONNECTOR);
-	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL.length > 0) { return excuteError(CONNECTOR)};
 
-	// 4. executE SCRIPT 
-	if (CONNECTOR.SCRIPTS) {SNJS.execute(CONNECTOR)};
-	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
+	// 4. EXCUTE SCRIPT 
+	if (CONNECTOR.SCRIPTS) {SNJS.excute(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL.length > 0) { return excuteError(CONNECTOR)};
 
 	// 5. REBUILD CONNECTOR from CODEBOX
 	if (CONNECTOR.SCRIPTS) {SNJS.codebox.render(CONNECTOR)};
-	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL.length > 0) { return excuteError(CONNECTOR)};
 
 	// 6. FINISH SNJS
 
@@ -92,11 +79,11 @@ SNJS.VERSION = "v0.0.03pa";
 SNJS.VER = function() {console.log(SNJS.VERSION);};
 
 // SNJS BUILT-IN UTILS
-// ROUTINE : collect -> codebox.create -> execute -> codebox.render 
+// ROUTINE : collect -> codebox.create -> excute -> codebox.render 
 
-SNJS.collect  = require("./SNJS.collect.js"); 
-SNJS.execute  = require("./SNJS.execute.js"); 
-SNJS.codebox  = require("./SNJS.codebox.js");
+SNJS.collect = require("./SNJS.collect.js"); 
+SNJS.excute  = require("./SNJS.excute.js"); 
+SNJS.codebox = require("./SNJS.codebox.js");
 
 /* 
 SNJS.remove = function() {};
@@ -122,58 +109,19 @@ var restrictIn = function(target) {
 
 var bodyFromFunction = function(func) { // function body -> string
 	var src = func.toString();
-	var result = src.substring(src.indexOf("{")+1, src.lastIndexOf("}"));
+	var result = src.substring(src.indexOf("{")+1, src.lastIndexOf("}"))
 	return result;
 };
 
 // FILE*PATH UTILS
-
-var trimFile = function(file, CONNECTOR) {
-	// Always relative path -> absolute path
-	var O = CONNECTOR.OPTIONS,
-		FILE = file,
-		TYPE = CONNECTOR.TYPE || "SOURCE",
-		PATH = (CONNECTOR.FILEINFO) ? (CONNECTOR.FILEINFO['path']||"") : "",
-		firstChar = file.charAt(0);
-		RESULT = "";
-
-	//TYPE == "SOURCE"
-	if (TYPE == "SOURCE") {
-		if (O['BASE_DIRECTORY']) RESULT = O['BASE_DIRECTORY'] + "/" + FILE;		
-	}
-
-	// TYPE == "FILE"
-	else if (firstChar == "/") RESULT = O['BASE_DIRECTORY'] + "/" + FILE;
-	else RESULT = path.normalize(PATH + "/" + FILE);	
-
-	// CHECK LOCK
-
-	if (O['LOCK_DIRECTORY']) {
-		if (RESULT.indexOf(O['LOCK_DIRECTORY']) != 0) return false;
-	}
-	return path.normalize(RESULT);
-};
-
-
-var checkType  = function(target) {
-	if (typeof target != "string") return false;
-	var check = target.charAt(0);
-	var hasLine = (target.indexOf("\n") > -1);
-	var result = ((check == "." || check == "/") && !hasLine) ? true : false ;
-	return result;
-};
-
-
-
 var checkFileUrl = function(target) {
+	var target = (typeof target == "object") ? target.FILE : target;
 	if (typeof target != "string") return false;
 	var check = target.charAt(0);
 	var hasLine = (target.indexOf("\n") > -1);
-	var result = ((check == "." || check == "/") && !hasLine) ? true : false ;
+	var result = ((check == "." || check == "/")&& !hasLine) ? true : false ;
 	return result;
 };
-
-
 var getFileInfo = function(connector) {
 	var CONNECTOR = connector;
 	var file = (typeof CONNECTOR == "object") ? CONNECTOR.FILE : connector; 
@@ -198,7 +146,7 @@ var getFileInfo = function(connector) {
 	}
 	catch (err) {
 		if (typeof CONNECOTR == "object") {
-			CONNECTOR.ERROR.NORMAL = "[FILE]" + file;
+			CONNECTOR.ERROR.NORMAL.push("[FILE]" + file);
 		}
 	};	
 	return result;
@@ -235,10 +183,10 @@ var SNJSError = function(message, type) {
 	};
 };
 
-var executeError = function(connector) {
+var excuteError = function(connector) {
 	var CONNECTOR = connector;
 	if (CONNECTOR.ERROR.NORMAL){
-		CONNECTOR.PARSED = CONNECTOR.ERROR.SOFT.join("\n") + CONNECTOR.ERROR.NORMAL;
+		CONNECTOR.PARSED = CONNECTOR.ERROR.SOFT.join("\n") + CONNECTOR.ERROR.NORMAL.join("\n");
 	};
 	if (CONNECTOR.ASYNC&&CONNECOTR.CALLBACK) {
 		return CONNECTOR.CALLBACK(CONNECTOR);
@@ -248,6 +196,5 @@ var executeError = function(connector) {
 
 // SNJS OPTIONS
 SNJS.OPTIONS = require("./SNJS.OPTION.js");
-
 
 module.exports = SNJS;

@@ -6,14 +6,14 @@ var vm = require('vm');
 var path = require('path');
 var extToCTYPE = require("./SNJS.ext.js");
 
-var SNJS = function(target, connector, callback) {	
+var SNJS = function(target, connector, callback) {
 
 	// O. INIT 
 
 	var CONNECTOR = connector || {} ;
 
 	CONNECTOR.ASYNC    = (callback) ? true : false ;
-	CONNECTOR.TYPE	   = (checkFileUrl(target)) ? "FILE" : "SOURCE";
+	CONNECTOR.TYPE	   = (checkFileUrl(target)) ? "FILE" : "SOURCE"; 
 	CONNECTOR.URL	   = CONNECTOR.URL || "";
 	CONNECTOR.USERAGENT= CONNECTOR.USERAGENT|| "";
 	CONNECTOR.REFERRER = CONNECTOR.REFERRER || "";
@@ -29,42 +29,58 @@ var SNJS = function(target, connector, callback) {
 	CONNECTOR.CHARSET  = CONNECTOR.CHARSET  || "utf-8";
 	CONNECTOR.CALLBACK = (typeof callback == "function") ? callback : undefined;	
 	CONNECTOR.SOURCE   = CONNECTOR.SOURCE   || "";
-  //CONNECTOR.PARSED   = ""; // Set By SNJS.excute()
-	CONNECTOR.ENV	   = {};					   // Set By CODEBOX
+  //CONNECTOR.PARSED   = ""; // Set By SNJS.execute()
+  //CONNECTOR.ENV	   = {};					   // Set By CODEBOX
 	CONNECTOR.VARS	   = CONNECTOR.VARS     || {}; // Pass the variables to the Codebox.
-	CONNECTOR.OPTIONS  = rebuildOptions(CONNECTOR);
-	CONNECTOR.ERROR    = undefined;
+	CONNECTOR.ERROR    = {SOFT:[], NORMAL:""};
 	CONNECTOR.PROTOCOL = CONNECTOR.PROTOCOL || ""; // HTTP, HTTPS, SIP
-	CONNECTOR.isCONN   = true;	
+	CONNECTOR.isCONN   = true;
+	CONNECTOR.INCLUDE  = { FILES : [], DEPTH : 0, PARENTS : []};
+	CONNECTOR.OPTIONS  = rebuildOptions(CONNECTOR);
 
-	// 1. CHECK TYPE AND GET SOURCE   
+	restrict(CONNECTOR, 'OPTIONS');
+
+	// 1. CHECK TYPE AND GET SOURCE 
+
+	if (typeof target != "string") {  // EXCEPTION invalid target option
+		CONNECOTR.ERROR.NORMAL = "[SNJS] " + "invaild file or source";
+		return executeError(CONNECTOR);
+	}
 	
 	if (CONNECTOR.TYPE == "FILE") {
-		CONNECTOR.FILE = target;
-		CONNECTOR.ENV['file'] = target;
+		CONNECTOR.FILE = trimFile(target, CONNECTOR);
+		if (!CONNECTOR.FILE) {
+			CONNECTOR.ERROR.NORMAL = "[SNJS 0]" + " check directory option or/and file";
+			return executeError(CONNECTOR);
+		}
 		CONNECTOR.FILEINFO = getFileInfo(CONNECTOR);
-		try	{CONNECTOR.SOURCE = fs.readFileSync(target, CONNECTOR.CHARSET);}
-		catch (err) {CONNECTOR.ERROR = "SNJS CAN'T ACCESS SOURCE : " + FILE}
+		
+		try	{
+			CONNECTOR.SOURCE = fs.readFileSync(target, CONNECTOR.CHARSET);
+		} catch (err) {
+			CONNECTOR.ERROR.NORMAL = "[SNJS.js] check source file : " + FILE ;
+		}
+
 	} else if (!CONNECTOR.SOURCE)  CONNECTOR.SOURCE = target;
-	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
 
 	// 2. GET SCRIPTS FROM SOURCE
 
 	SNJS.collect(CONNECTOR);
-	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
 	
 	// 3. CREATE CODEBOX  
 
 	if (CONNECTOR.SCRIPTS) CONNECTOR.CODEBOX = SNJS.codebox.create(CONNECTOR);
-	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
 
-	// 4. EXCUTE SCRIPT 
-	if (CONNECTOR.SCRIPTS) {SNJS.excute(CONNECTOR)};
-	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
+	// 4. executE SCRIPT 
+	if (CONNECTOR.SCRIPTS) {SNJS.execute(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
 
 	// 5. REBUILD CONNECTOR from CODEBOX
 	if (CONNECTOR.SCRIPTS) {SNJS.codebox.render(CONNECTOR)};
-	if (CONNECTOR.ERROR) { return excuteError(CONNECTOR)};
+	if (CONNECTOR.ERROR.NORMAL) { return executeError(CONNECTOR)};
 
 	// 6. FINISH SNJS
 
@@ -72,18 +88,17 @@ var SNJS = function(target, connector, callback) {
 	else return CONNECTOR;
 };
 
-SNJS.VERSION = "v0.0.02pa";
+SNJS.VERSION = "v0.0.03pa";
 SNJS.VER = function() {console.log(SNJS.VERSION);};
 
 // SNJS BUILT-IN UTILS
-// ROUTINE : collect -> codebox.create -> excute -> codebox.render 
+// ROUTINE : collect -> codebox.create -> execute -> codebox.render 
 
 /* 
 SNJS.remove = function() {};
 SNJS.escape = function() {};
 SNJS.unescape = function() {};
 */
-
 
 // INSIDE UTILS;
 
@@ -103,20 +118,57 @@ var restrictIn = function(target) {
 
 var bodyFromFunction = function(func) { // function body -> string
 	var src = func.toString();
-	var result = src.substring(src.indexOf("{")+1, src.lastIndexOf("}"))
+	var result = src.substring(src.indexOf("{")+1, src.lastIndexOf("}"));
 	return result;
 };
 
-// FILE UTILS
+// FILE*PATH UTILS
 
-var checkFileUrl = function(target) {
-	var target = (typeof target == "object") ? target.FILE : target;
+var trimFile = function(file, CONNECTOR) {
+	// Always relative path -> absolute path
+	var O = CONNECTOR.OPTIONS,
+		FILE = file,
+		TYPE = CONNECTOR.TYPE || "SOURCE",
+		PATH = (CONNECTOR.FILEINFO) ? (CONNECTOR.FILEINFO['path']||"") : "",
+		firstChar = file.charAt(0);
+		RESULT = "";
+
+	//TYPE == "SOURCE"
+	if (TYPE == "SOURCE") {
+		if (O['BASE_DIRECTORY']) RESULT = O['BASE_DIRECTORY'] + "/" + FILE;		
+	}
+
+	// TYPE == "FILE"
+	else if (firstChar == "/") RESULT = O['BASE_DIRECTORY'] + "/" + FILE;
+	else RESULT = path.normalize(PATH + "/" + FILE);	
+
+	// CHECK LOCK
+
+	if (O['LOCK_DIRECTORY']) {
+		if (RESULT.indexOf(O['LOCK_DIRECTORY']) != 0) return false;
+	}
+	return path.normalize(RESULT);
+};
+
+
+var checkType  = function(target) {
 	if (typeof target != "string") return false;
 	var check = target.charAt(0);
 	var hasLine = (target.indexOf("\n") > -1);
-	var result = ((check == "." || check == "/")&& !hasLine) ? true : false ;
+	var result = ((check == "." || check == "/") && !hasLine) ? true : false ;
 	return result;
 };
+
+
+
+var checkFileUrl = function(target) {
+	if (typeof target != "string") return false;
+	var check = target.charAt(0);
+	var hasLine = (target.indexOf("\n") > -1);
+	var result = ((check == "." || check == "/") && !hasLine) ? true : false ;
+	return result;
+};
+
 
 var getFileInfo = function(connector) {
 	var CONNECTOR = connector;
@@ -142,14 +194,13 @@ var getFileInfo = function(connector) {
 	}
 	catch (err) {
 		if (typeof CONNECOTR == "object") {
-			CONNECTOR.ERROR = "SNJS can't read fileinfo : " + file;
+			CONNECTOR.ERROR.NORMAL = "[FILE]" + file;
 		}
 	};	
 	return result;
 };
 
-// SOURCE & SCRIPT UTILS
-
+// SOURCE&SCRIPT UTILS
 var getSource = function(target, econde) {
 	var encode = encode || 'utf-8';
 	try {result = fs.readFileSync(target,'utf-8');}
@@ -157,22 +208,18 @@ var getSource = function(target, econde) {
 	return result;	
 };
 
-var getScript = function(targetSource) {
-	return SNJS.collect(targetSource);
-};
-
-var flagScript = function(source) {
-
-};
-
 var rebuildOptions = function(CONNECTOR) {
-	var OPTIONS = CONNECTOR.OPTIONS;
-	var RESULT = {};
-	for (var i in SNJS.OPTIONS) RESULT[i] = SNJS.OPTIONS[i];
-	for (var i in OPTIONS) RESULT[i] = OPTIONS[i];
+	var O1 = CONNECTOR.OPTIONS,
+		O2 = SNJS.OPTIONS,
+		RESULT = {};
+	for (var i in O1) RESULT[i] = O1[i];
+	for (var i in O2) RESULT[i] = O2[i];
+	
+	restrictIn(RESULT);
 	return RESULT;
 };
 
+// ERROR UTILS
 var SNJSError = function(message, type) {
 	var self = this;
 	self.isError = true;
@@ -184,25 +231,26 @@ var SNJSError = function(message, type) {
 	};
 };
 
-var excuteError = function(connector) {
+var executeError = function(connector) {
 	var CONNECTOR = connector;
-	CONNECTOR.PARSED = CONNECTOR.ERROR;
+	if (CONNECTOR.ERROR.NORMAL){
+		CONNECTOR.PARSED = CONNECTOR.ERROR.SOFT.join("\n") + CONNECTOR.ERROR.NORMAL;
+	};
 	if (CONNECTOR.ASYNC&&CONNECOTR.CALLBACK) {
 		return CONNECTOR.CALLBACK(CONNECTOR);
 	}
 	return CONNECTOR;
 };
 
-//  SNJS.codebox.js
-
+/*** SNJS.codebox.js ***/
 SNJS.codebox = {};
-
 SNJS.codebox.create = function(connector) {
 	var CONNECTOR = connector;
+	var O = CONNECTOR.OPTIONS;
 	var CODEBOX = {
 		_REQUEST  : CONNECTOR.REQUEST,
 		_RESPONSE : CONNECTOR.RESPONSE || {},
-		_ENV	  : CONNECTOR.ENV,
+		_ENV	  : {},
 		_OPTIONS  : CONNECTOR.OPTIONS,
 		_VAR	  : {} 
 	};
@@ -211,19 +259,18 @@ SNJS.codebox.create = function(connector) {
 	for (var i in CONNECTOR.VARS) CODEBOX[i] = CODEBOX[i] || CONNECTOR.VARS[i];
 
 	// SET ENVIROMENTAL VARIABLES  		
-	if (CONNECTOR.PROTOCOL)   ENV['protocol']    = CONNECTOR.PROTOCOL; 
-	if (CONNECTOR.URL)        ENV['URL']         = CONNECTOR.URL;	
-	if (CONNECTOR.METHOD)     ENV['method']      = CONNECTOR.METHOD;
-	if (CONNECTOR.USERAGENT)  ENV['user_agent']  = CONNECTOR.USERAGENT;
-	if (CONNECTOR.REMOTEADDR) ENV['remote_addr'] = CONNECTOR.REMOTEADDR;
-	if (CONNECTOR.RFERRER)    ENV['referrer']    = CONNECTOR.RFERRER;	
-	if (CONNECTOR.SESSIONID)  ENV['sessionid']   = CONNECTOR.SESSIONID;
-	if (CONNECTOR.CHARSET)    ENV['charset']     = CONNECTOR.CHARSET;	
+	if (CONNECTOR.PROTOCOL)   ENV['protocol']      = CONNECTOR.PROTOCOL; 
+	if (CONNECTOR.URL)        ENV['URL']           = CONNECTOR.URL;	
+	if (CONNECTOR.METHOD)     ENV['method']        = CONNECTOR.METHOD;
+	if (CONNECTOR.USERAGENT)  ENV['user_agent']    = CONNECTOR.USERAGENT;
+	if (CONNECTOR.REMOTEADDR) ENV['remote_addr']   = CONNECTOR.REMOTEADDR;
+	if (CONNECTOR.RFERRER)    ENV['referrer']      = CONNECTOR.RFERRER;	
+	if (CONNECTOR.SESSIONID)  ENV['sessionid']     = CONNECTOR.SESSIONID;
+	if (CONNECTOR.CHARSET)    ENV['charset']       = CONNECTOR.CHARSET;
+	if (O['BASE_DIRECTORY'])  ENV['base_directory']= CONNECTOR.O['BASE_DIRECTORY'];
 	if (CONNECTOR.TYPE = "FILE") {
-		CONNECTOR.ENV['modification']            = CONNECTOR.FILEINFO.mtime;
-		CODEBOX._RESPONSE['last-modified']       = CONNECTOR.FILEINFO.mtime;
-		if (CONNECTOR.FILEINFO['content-type']) 
-		CODEBOX._RESPONSE['content-type']        = CONNECTOR.FILEINFO['content-type'];
+		ENV['last-modified'] = CONNECTOR.FILEINFO.mtime;
+		ENV['content-type']  = CONNECTOR.FILEINFO['content-type'];
 	};
 	return CODEBOX;	
 };
@@ -233,20 +280,21 @@ SNJS.codebox.render = function(connector) {
 	var CODEBOX   = CONNECTOR.CODEBOX; 
 
 	CONNECTOR.RESPONSE = CODEBOX._RESPONSE;
-	CONNECTOR.COOKIES  = CODEBOX.COOKIES;
+	CONNECTOR.COOKIES  = CODEBOX._COOKIES;
 	CONNECTOR.SESSION  = CODEBOX.SESSION;
 
 	return CONNECTOR;
 };
 
-//  SNJS.excute.js 
+/*** SNJS.execute.js ***/
 
-SNJS.excute = function(connector) {
+SNJS.execute = function(connector) {
 	var CONNECTOR = connector;
 	var SOURCE  = CONNECTOR.SOURCE;
-	var OPTIONS = CONNECTOR.OPTIONS;
 	var CODEBOX = CONNECTOR.CODEBOX;
 	var	SCRIPTS = CONNECTOR.SCRIPTS;
+	var INCLUDE = CONNECTOR.INCLUDE;
+	var O = CONNECTOR.OPTIONS;
 	var PARSED  = "";
 	
 	// define local variables;
@@ -256,15 +304,21 @@ SNJS.excute = function(connector) {
 	var STATE   = "init";
 	var TYPE; // 'snjs', 'share', 'script'
 
-	CODEBOX._PARSED = [];
+	var execute = function(code) {
+		vm.runInNewContext(code, CODEBOX, VFILE);
+		return vm;
+	};
+
+	CODEBOX._PARSED = {};
 
 	// BUILT ENVIRONMENT FROM OPTIONS
-	if (OPTIONS['ALLOW_REQUIRE']) CODEBOX.require = require;
+	if (O['ALLOW_REQUIRE']) CODEBOX.require = require;
+	if (O['ALLOW_CONSOLE']) CODEBOX.console = console;
 
 	// ATTACH GLOBAL OBJECT
-	vm.runInNewContext("var self=window=this;", CODEBOX, VFILE);
+	execute("var self=window=this;");
 
-	// ATTACH MAIN UTILS (document.write, echo);
+	// ATTACH BUILT-IN UTILS
 
 	CODEBOX.document = {};	
 	CODEBOX.print = function(txt) {
@@ -273,68 +327,108 @@ SNJS.excute = function(connector) {
 			CODEBOX._PARSED[COUNTER].push(txt);
 		}
 	};
-	if (CODEBOX.document) CODEBOX.document.write = CODEBOX.print;
-	
 
-	CODEBOX.echo = function(txt) {
-		var text = txt;
-		CODEBOX.print(text);
+	if (CODEBOX.document) {
+		CODEBOX.document.write = CODEBOX.print;	
+	};
+	
+	if (O['ALLOW_NODEEVAL']) {
+		CODEBOX.nodeEval = function(code) {
+			return eval.call(null, code);
+		};
 	};
 
-	
-	// ATTACH COOKIES UTILS (document.write, echo);
+	CODEBOX.echo = function(txt) {
+		CODEBOX.print(txt);
+	};
 
-	if (CONNECTOR.COOKIES) {
-		for (var i in CONNECTOR.COOKIES) {
+	if (O['ALLOW_INCLUDE']) {
+		CODEBOX.include = function(file, once) {
+			var INCLUDE = CONNECTOR.INCLUDE; // FILES : [], DEPTH : 0, PARENTS
+			var FILE = trimFile(file, CONNECTOR);
 
-		}
+			// CHECK : FILE
+			if (!FILE) return CONNECTOR.ERROR.NORMAL = "[INCLUDE] Check File : " + file;
+
+			// CHECK : INCLUDE_ONCE & LOOP FILE
+			if (once) if (INCLUDE.FILES.indexOf(FILE) > -1) return false;
+			if (INCLUDE.PARENTS.indexOf(FILE) > -1) return false
+
+			var SOURCE = fs.readFileSync(FILE, "utf-8");
+			if (!SOURCE) return CONNECTOR.ERROR.NORMAL = "[INCLUDE] Check File : " + file;
+
+			var result = SNJS.collect.get(SOURCE, CONNECTOR);
+			CONNECTOR.ERROR.NORMAL = result.ERROR.NORMAL || "";
+
+			INCLUDE.FILES.push(FILE);
+			INCLUDE.PARENTS.push(FILE);
+
+			for (var i=0; i < result.SCRIPTS.length; i++ ) {
+				try	{execute(result.SCRIPTS[i].text);}
+				catch (err) {
+					CONNECTOR.ERROR.NORMAL = "[INCLUDE] " + FILE + " " + err;
+					return false;
+				}
+			}
+			return true;
+			
+		};	
+		CODEBOX.include_once = function(file) {
+			return CODEBOX.include(file, true);
+		};
 	}
-
-	
+		
 	STATE = "loading";
 
+	// LET"S GOGOGOGO NORMAL executING
+
+	var DEFER = [];
+
 	for (COUNTER = 0 ; COUNTER < SCRIPTS.length ; COUNTER++) {
-		var script = SCRIPTS[COUNTER];
-		TYPE = script._type || undefined;
-		try	{			
-			if (TYPE=="share" && (OPTIONS['ALLOW_SHARE'])) {
-				vm.runInNewContext(script.text, CODEBOX, VFILE);
-			} else if (TYPE=="snjs" || TYPE=="script") {
-				vm.runInNewContext(script.text, CODEBOX, VFILE);
-			};			
+		var script = SCRIPTS[COUNTER],
+			TYPE = script._type || undefined
+			INCLUDE.PARENTS = [CONNECTOR.FILE]; // TOP parent
+			INCLUDE.DEPTH = 0;
+		try	{
+			if (TYPE=="share" && O['ALLOW_SHARE']) execute(script.text);
+			else if (TYPE=="snjs" || TYPE=="script") execute(script.text);
 		}
 		catch (err)	{
-			CONNECTOR.ERROR = "SYNTAX ERROR " + err; 
+			CONNECTOR.ERROR.NORMAL = "[execute:" + script._type + COUNTER +"] "+ err; 
 			return CONNECTOR;
-		}
+		};
+		if (CONNECTOR.ERROR.NORMAL) return undefined;
 	};
 
 	STATE = "loaded";
 
+	// HANDLE DEFER
+
+	// NEXT TIME
+
 	STATE = "complete";
 
-	// REPLACE SOURCE;
+	// LET"S GOGOGOGO PARSING
 	
 	var CARROT = 0;
 	var PARSED = SOURCE;
-	for (var i in CODEBOX._PARSED) { // BE CAREFUL. FOR IN USES ARRAY TYPE [TO-DO: FIX FOR EXCEPTION] 
+	for (var i in CODEBOX._PARSED) {
+
+		if (script._type=="share") continue;
+		
 		var script = SCRIPTS[i];
-		var type   = script._type;
 		var range  = script._range;
 		var data   = CODEBOX._PARSED[i].join("");
-		if (type=="share") continue;
-		if (data) {			
-			var header  = PARSED.slice(0, range[0] + CARROT);
-			var footer  = PARSED.slice(range[1] + CARROT);
-			PARSED = header + data + footer;
-			CARROT = CARROT - ((range[1] - range[0]) - data.length) ;
-		}
+		var header  = PARSED.slice(0, range[0] + CARROT);
+		var footer  = PARSED.slice(range[1] + CARROT);
+		PARSED = header + data + footer;
+		CARROT = CARROT - ((range[1] - range[0]) - data.length) ;
 	};
 	CONNECTOR.PARSED = PARSED;
 	return CONNECTOR;
 }
 
-// SNJS.collect.js
+/*** SNJS.collect.js  ***/
 
 var NEEDLE = {
 	snjs     : "<(snjs)(\\s+(?:\"[^\"]*\"|'[^']*'|[^>])+)?>([\\S|\\s]*?)</\\1>",
@@ -345,13 +439,14 @@ var NEEDLE = {
 SNJS.collect = function(connector) { //script collection
 	var result = [];
 	var CONNECTOR = connector;
-	var OPTIONS = CONNECTOR.OPTIONS;
+	var O = CONNECTOR.OPTIONS;
 	var source = CONNECTOR.SOURCE;
 	var _attr, _tag;
 	for ( _tag in NEEDLE) {
 		var Reg = RegExp(NEEDLE[_tag], "gi");
 		var test;
 		while ((test = Reg.exec(source)) != null) { try {
+
 			if (test[2]) {
 				_attr = test[2].trim();
 				_attr = _attr.match(/(\w|^=)+=("[^"]*"|'[^']*')+/gi);
@@ -364,6 +459,7 @@ SNJS.collect = function(connector) { //script collection
 					return result; 
 				});
 			};
+
 			var script = { 
 				tagName    : _tag,
 				attributes : attr,
@@ -371,17 +467,21 @@ SNJS.collect = function(connector) { //script collection
 				_type	   : undefined,
 				_range     : [test.index, Reg.lastIndex]
 			};
+
 			if (script.attributes&&script.attributes.src) script.src = script.attributes.src;
 			if (script.attributes&&script.attributes.id) script.id = script.attributes.id;
 			if (script.attributes&&script.attributes.charset) script.charset = script.attributes.charset;
-			if (script.tagName=="snjs") script._type = "snjs";
-			else if (script.tagName=="script") {
+			
+			// SET script._type
+			if (script.tagName=="snjs") { 
+				script._type = "snjs";
+			} else if (script.tagName=="script") {
 				if(script.attributes.type.indexOf('javascript')>0) {
 					if (script.attributes.share == "true") script._type = "share";
 				} else if (script.attributes.type=="application/x-snjs") script._type = "script";
 			};
 
-			if (script._type&&script.src&&OPTIONS.ALLOW_SOURCE_LINK) {
+			if (script._type&&script.src&&O['ALLOW_SOURCE_LINK']) {
 				var file = "";
 				if (script.src.indexOf(":") > 0 ) continue; // skip remote resource (http://);
 				else if (script.src.charAt(0) == "/") file = script.src;
@@ -391,7 +491,7 @@ SNJS.collect = function(connector) { //script collection
 			};
 			if (script._type) result.push(script);
 
-		} catch(err) {CONNECTOR.ERROR = "SNJS.collect " + err; return CONNECTOR} };
+		} catch(err) {CONNECTOR.ERROR.SOFT.push("[collect]" + err); return CONNECTOR} };
 	};
 	if (result.length == 0) return undefined;
 	var sort = function(a,b){return a._range[0]-b._range[0]};
@@ -399,15 +499,31 @@ SNJS.collect = function(connector) { //script collection
 	return CONNECTOR;
 };
 
+SNJS.collect.get = function(source, connector) {
+	var VConnector = {
+		TYPE     : connector.TYPE,
+		FILEINFO : connector.FILEINFO,
+		SOURCE   : source,
+		OPTIONS  : connector.option,
+		ERROR    :  { SOFT : [], NORMAL : ""}
+	};	
+	return SNJS.collect(VConnector);	
+};
 
-// SNJS OPTIONS
-
+/*** SNJS.option.js ***/
 try {
 	var OPTIONFILE = __dirname + "/SNJS.default.json";
 	SNJS.OPTIONS = JSON.parse(fs.readFileSync(OPTIONFILE, 'utf-8'));
 }
-catch (err){
+
+catch (err) {
 	SNJS.OPTIONS = {};
-}
+};
+
+// BUG-FIX : Stop converting undefined type -> "undefined" string
+
+SNJS.OPTIONS['BASE_DIRECTORY'] = SNJS.OPTIONS['BASE_DIRECTORY'] || "";
+SNJS.OPTIONS['LOCK_DIRECTORY'] = SNJS.OPTIONS['LOCK_DIRECTORY'] || "";
+
 
 module.exports = SNJS;
